@@ -1,6 +1,5 @@
 streamlit
-google-generativeai
+google-genai
 Pillow
 pdf2image
 fpdf2
-twilio
