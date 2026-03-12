@@ -23,34 +23,6 @@ except Exception:
 st.set_page_config(page_title="Site Pilot AI", layout="wide", page_icon="🏗️")
 
 # ==========================================
-# 1.5. THE GATEKEEPER (PASSWORD WALL)
-# ==========================================
-def check_password():
-    """Returns `True` if the user had the correct password."""
-    def password_entered():
-        if st.session_state["password"] == st.secrets.get("APP_PASSWORD", ""):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        st.markdown('<div style="text-align:center; padding-top:100px;"><h1 style="font-size: 3em; color: #0F172A;">🏗️ Site Pilot</h1><p>Authorized Beta Personnel Only</p></div>', unsafe_allow_html=True)
-        st.text_input("🔒 Enter Beta Password", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.markdown('<div style="text-align:center; padding-top:100px;"><h1 style="font-size: 3em; color: #0F172A;">🏗️ Site Pilot</h1><p>Authorized Beta Personnel Only</p></div>', unsafe_allow_html=True)
-        st.text_input("🔒 Enter Beta Password", type="password", on_change=password_entered, key="password")
-        st.error("😕 Access Denied: Incorrect Password")
-        return False
-    else:
-        return True
-
-# Stop the app from loading if the password is wrong
-if not check_password():
-    st.stop()
-
-# ==========================================
 # 2. ENTERPRISE ADAPTIVE CSS
 # ==========================================
 st.markdown("""
@@ -92,12 +64,11 @@ def load_json(filename, suffix, default):
     return default
 
 def create_pdf_report(project_name, content, title):
-    """Updated PDF generator compliant with fpdf2 2.7.8+ standards."""
+    """Updated PDF generator compliant with fpdf2 standards."""
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     
-    # Modern Syntax formatting
     pdf.set_font("helvetica", 'B', 16)
     pdf.cell(190, 10, f"Project: {project_name}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
     pdf.set_font("helvetica", 'I', 12)
@@ -120,7 +91,6 @@ def create_pdf_report(project_name, content, title):
     return bytes(pdf.output())
 
 def run_ai_with_progress(file_bytes, target_pages, prompt_text, success_message="Task Complete!"):
-    """Updated Gemini API call for 2026 google-genai architecture."""
     progress_bar = st.progress(0)
     status_text = st.empty()
     d_imgs = []
@@ -134,7 +104,6 @@ def run_ai_with_progress(file_bytes, target_pages, prompt_text, success_message=
     status_text.markdown("**🧠 AI Engine Reviewing Scope...**")
     d_imgs.insert(0, prompt_text)
     
-    # New Client-based generation
     response = ai_client.models.generate_content(
         model='gemini-2.5-pro',
         contents=d_imgs
@@ -168,7 +137,7 @@ for key in keys_to_initialize:
 # ==========================================
 with st.sidebar:
     st.markdown("## 🏗️ Site Pilot")
-    st.caption("Enterprise OS v21.0")
+    st.caption("Enterprise OS v21.2")
     st.divider()
     
     st.markdown("### 📋 Document Uploads")
@@ -200,9 +169,6 @@ if uploaded_file:
 
     st.markdown(f'<div class="status-bar"><span>📂 <strong>Project:</strong> {st.session_state.current_file}</span><span>📄 <strong>Total Sheets:</strong> {total_pages}</span></div>', unsafe_allow_html=True)
 
-    # ------------------------------------------
-    # HERO TOOL: AI DRAWING INDEXER
-    # ------------------------------------------
     with st.expander("🗂️ AI Drawing Indexer", expanded=False):
         st.markdown("Extract sheet names from title blocks to automatically rename dropdown menus.")
         
@@ -266,7 +232,6 @@ if uploaded_file:
         with c_tools:
             st.markdown("#### ⚙️ VDC Engines")
             
-            # --- CLASH AUDIT ---
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
             if st.button("🚀 Run Clash Audit"):
                 if target_docs:
@@ -284,7 +249,6 @@ if uploaded_file:
                 st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # --- MATERIAL TAKEOFF ---
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
             if st.button("📊 Material Takeoff"):
                 if target_docs:
@@ -302,7 +266,6 @@ if uploaded_file:
                 st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # --- TIMELINE ---
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
             if st.button("📅 Project Timeline"):
                 if target_docs:
@@ -456,5 +419,6 @@ else:
     st.markdown('<h1 class="hero-title">🏗️ Site Pilot AI</h1>', unsafe_allow_html=True)
     st.markdown('<p class="hero-sub">Upload base drawings in the sidebar to initialize the project environment.</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
 
 
