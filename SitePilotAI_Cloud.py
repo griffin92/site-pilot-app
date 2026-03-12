@@ -11,19 +11,21 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
 # ==========================================
-# 1. SETUP & SECURE API CONFIGURATION
+# 1. PAGE CONFIG (MUST BE FIRST COMMAND)
 # ==========================================
-try:
-    # 2026 SDK Initialization
-    ai_client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-except Exception:
-    st.error("🚨 CONFIGURATION ERROR: GEMINI_API_KEY not found in Streamlit Cloud Secrets.")
-    st.stop()
-
 st.set_page_config(page_title="Site Pilot AI", layout="wide", page_icon="🏗️")
 
 # ==========================================
-# 2. ENTERPRISE ADAPTIVE CSS
+# 2. SETUP & SECURE API CONFIGURATION
+# ==========================================
+try:
+    ai_client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+except Exception:
+    st.error("🚨 CONFIGURATION ERROR: GEMINI_API_KEY not found in Streamlit Cloud Secrets. Please add it to your app settings.")
+    st.stop()
+
+# ==========================================
+# 3. ENTERPRISE ADAPTIVE CSS
 # ==========================================
 st.markdown("""
     <style>
@@ -42,7 +44,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. CLOUD-READY UTILITIES
+# 4. CLOUD-READY UTILITIES
 # ==========================================
 @st.cache_resource
 def get_pdf_info(file_bytes):
@@ -52,19 +54,7 @@ def get_pdf_info(file_bytes):
 def convert_single_page(file_bytes, page_num):
     return convert_from_bytes(file_bytes, first_page=page_num, last_page=page_num)[0]
 
-def save_json(filename, data, suffix):
-    with open(f"{filename}_{suffix}.json", 'w') as f: 
-        json.dump(data, f)
-
-def load_json(filename, suffix, default):
-    path = f"{filename}_{suffix}.json"
-    if os.path.exists(path):
-        with open(path, 'r') as f: 
-            return json.load(f)
-    return default
-
 def create_pdf_report(project_name, content, title):
-    """Updated PDF generator compliant with fpdf2 standards."""
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -83,10 +73,8 @@ def create_pdf_report(project_name, content, title):
         words = [w[:80] + '-' + w[80:] if len(w) > 80 else w for w in encoded_t.split(' ')]
         pdf.multi_cell(190, 6, text=' '.join(words))
 
-    if isinstance(content, list): 
-        safe_write("\n".join([f"- {item}" for item in content]))
-    else: 
-        safe_write(str(content))
+    if isinstance(content, list): safe_write("\n".join([f"- {item}" for item in content]))
+    else: safe_write(str(content))
         
     return bytes(pdf.output())
 
@@ -114,13 +102,13 @@ def run_ai_with_progress(file_bytes, target_pages, prompt_text, success_message=
     return response.text
 
 # ==========================================
-# 4. SESSION INITIALIZATION
+# 5. SESSION INITIALIZATION
 # ==========================================
 keys_to_initialize = [
     'audit_results', 'takeoff_results', 'schedule_results', 'schedule_csv', 
     'doc_intel_results', 'est_results', 'submittal_results', 'drawing_index', 
     'audit_history', 'takeoff_history', 'schedule_history', 'intel_history', 
-    'est_history', 'submittal_history', 'current_file'
+    'est_history', 'submittal_history', 'current_file', 'loaded_save_id'
 ]
 
 for key in keys_to_initialize:
@@ -133,11 +121,11 @@ for key in keys_to_initialize:
             st.session_state[key] = ""
 
 # ==========================================
-# 5. ENHANCED SIDEBAR
+# 6. SIDEBAR & SAVE SYSTEM
 # ==========================================
 with st.sidebar:
     st.markdown("## 🏗️ Site Pilot")
-    st.caption("Enterprise OS v21.2")
+    st.caption("Enterprise OS v22.1")
     st.divider()
     
     st.markdown("### 📋 Document Uploads")
@@ -146,21 +134,52 @@ with st.sidebar:
     doc_file = st.file_uploader("3️⃣ Legal/Contracts (.pdf)", type=["pdf"])
     
     st.divider()
-    st.info("💡 **Pro-Tip:** Run the 'Auto-Index' tool on the main page after uploading your base drawings.")
+    st.markdown("### 💾 Save & Restore")
+    save_file = st.file_uploader("4️⃣ Restore Project (.json)", type=["json"], help="Upload a previously downloaded save file here to restore your work.")
+    
+    # Export Current State to JSON
+    export_state = {k: st.session_state[k] for k in keys_to_initialize if k in st.session_state and k != 'loaded_save_id'}
+    json_state = json.dumps(export_state)
+    
+    st.download_button(
+        label="💾 Download Save File",
+        data=json_state,
+        file_name=f"SitePilot_Save_{datetime.now().strftime('%Y%m%d')}.json",
+        mime="application/json",
+        type="primary"
+    )
 
 # ==========================================
-# 6. DATA LOADER & MAIN LOGIC
+# 7. CLOUD MEMORY LOGIC
+# ==========================================
+# Handle new PDF uploads (Wipe old data if it's a completely new project)
+if uploaded_file and st.session_state.current_file != uploaded_file.name:
+    st.session_state.current_file = uploaded_file.name
+    # Only wipe if we aren't actively restoring a save file
+    if save_file is None or st.session_state.loaded_save_id != save_file.file_id:
+        st.session_state.drawing_index = {}
+        for h in ['audit', 'takeoff', 'schedule', 'est', 'intel', 'submittal']:
+            st.session_state[f"{h}_history"] = []
+            st.session_state[f"{h}_results"] = [] if h in ['audit', 'takeoff', 'submittal'] else ""
+        st.session_state.schedule_csv = ""
+    st.rerun()
+
+# Handle Save File Restoration (Bulletproof JSON decode)
+if save_file and st.session_state.loaded_save_id != save_file.file_id:
+    try:
+        saved_data = json.loads(save_file.getvalue().decode("utf-8"))
+        for k, v in saved_data.items():
+            st.session_state[k] = v
+        st.session_state.loaded_save_id = save_file.file_id
+        st.success("✅ Project state restored successfully!")
+        st.rerun()
+    except Exception as e:
+        st.error("🚨 Invalid save file. Please upload a valid Site Pilot JSON.")
+
+# ==========================================
+# 8. MAIN LOGIC
 # ==========================================
 if uploaded_file:
-    
-    if st.session_state.current_file != uploaded_file.name:
-        st.session_state.current_file = uploaded_file.name
-        fname = uploaded_file.name
-        st.session_state.drawing_index = load_json(fname, "index", {})
-        for h in ['audit', 'takeoff', 'schedule', 'est', 'intel', 'submittal']:
-            st.session_state[f"{h}_history"] = load_json(fname, f"{h}_history", [])
-        st.rerun()
-        
     file_bytes = uploaded_file.read()
     total_pages = get_pdf_info(file_bytes)
     
@@ -171,46 +190,34 @@ if uploaded_file:
 
     with st.expander("🗂️ AI Drawing Indexer", expanded=False):
         st.markdown("Extract sheet names from title blocks to automatically rename dropdown menus.")
-        
         c_idx1, c_idx2 = st.columns([1, 4])
         with c_idx1:
             if st.button("🔍 Run Auto-Index"):
-                idx_prog = st.progress(0)
-                idx_stat = st.empty()
-                new_index = {}
-                
+                idx_prog = st.progress(0); idx_stat = st.empty(); new_index = {}
                 for i in range(1, total_pages + 1):
                     img = convert_single_page(file_bytes, i)
                     try:
                         prompt = "Extract the Sheet Number and Sheet Title from this title block. Output ONLY in this exact format: 'SheetNumber - SheetTitle'."
                         res = ai_client.models.generate_content(model='gemini-2.5-pro', contents=[prompt, img])
                         new_index[str(i)] = res.text.strip().replace('\n', '')
-                    except: 
-                        new_index[str(i)] = f"Page {i}"
-                        
+                    except: new_index[str(i)] = f"Page {i}"
                     idx_prog.progress(int((i / total_pages) * 100))
-                    
                 st.session_state.drawing_index = new_index
-                save_json(uploaded_file.name, new_index, "index")
                 idx_stat.success("✅ Indexing Complete!")
                 st.rerun()
 
     page_opts = list(st.session_state.drawing_index.values())
     tab_vdc, tab_est, tab_admin = st.tabs(["🗺️ Plan Room & VDC", "🧮 Estimating & Docs", "📋 Admin & Specs"])
 
-    # ==========================================
-    # TAB 1: PLAN ROOM & VDC
-    # ==========================================
+    # --- TAB 1: PLAN ROOM ---
     with tab_vdc:
         st.markdown('<div class="tool-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Workspace Setup</div>', unsafe_allow_html=True)
-        
         c_sel1, c_sel2 = st.columns([3, 1])
         with c_sel1:
             all_selected = st.checkbox("☑️ Select Entire Drawing Set")
             default_selection = page_opts if all_selected else []
             target_docs = st.multiselect("Target Sheets:", page_opts, default=default_selection, label_visibility="collapsed")
-        
         with c_sel2: 
             st.markdown('<div class="btn-clear">', unsafe_allow_html=True)
             if st.button("🧹 Clear Workspace"):
@@ -221,7 +228,6 @@ if uploaded_file:
         st.markdown('</div>', unsafe_allow_html=True)
 
         c_view, c_tools = st.columns([1.5, 1])
-        
         with c_view:
             st.markdown("#### 👁️ Sheet Viewer")
             selected_main = st.selectbox("Active View:", page_opts, label_visibility="collapsed")
@@ -231,7 +237,7 @@ if uploaded_file:
 
         with c_tools:
             st.markdown("#### ⚙️ VDC Engines")
-            
+            # Clash Engine
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
             if st.button("🚀 Run Clash Audit"):
                 if target_docs:
@@ -239,9 +245,7 @@ if uploaded_file:
                     res = run_ai_with_progress(file_bytes, p_scan, "Identify physical clashes or missing dimensions. Start each with 'ISSUE: '.", "Audit Complete!")
                     st.session_state.audit_results = [l.replace("ISSUE:", "").strip() for l in res.split("\n") if "ISSUE:" in l]
                     st.session_state.audit_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Audit", "results": st.session_state.audit_results})
-                    save_json(uploaded_file.name, st.session_state.audit_history, "audit_history")
                 else: st.warning("Please select sheets first.")
-                    
             if st.session_state.audit_results:
                 st.markdown('<div class="report-box" style="border-left-color: #EF4444; padding: 10px;">', unsafe_allow_html=True)
                 for issue in st.session_state.audit_results: st.write(f"🚩 {issue}")
@@ -249,6 +253,7 @@ if uploaded_file:
                 st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
+            # Takeoff Engine
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
             if st.button("📊 Material Takeoff"):
                 if target_docs:
@@ -256,9 +261,7 @@ if uploaded_file:
                     res = run_ai_with_progress(file_bytes, p_scan, "Perform detailed material takeoff. Output continuous lines starting with 'TAKEOFF: '.", "Takeoff Complete!")
                     st.session_state.takeoff_results = [l.replace("TAKEOFF:", "").strip() for l in res.split("\n") if "TAKEOFF:" in l]
                     st.session_state.takeoff_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Takeoff", "results": st.session_state.takeoff_results})
-                    save_json(uploaded_file.name, st.session_state.takeoff_history, "takeoff_history")
                 else: st.warning("Please select sheets first.")
-                    
             if st.session_state.takeoff_results:
                 st.markdown('<div class="report-box" style="border-left-color: #10B981; padding: 10px;">', unsafe_allow_html=True)
                 for item in st.session_state.takeoff_results: st.write(f"📦 {item}")
@@ -266,6 +269,7 @@ if uploaded_file:
                 st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
+            # Timeline Engine
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
             if st.button("📅 Project Timeline"):
                 if target_docs:
@@ -273,26 +277,21 @@ if uploaded_file:
                     prompt = f"Analyze drawings. Today is {datetime.now().strftime('%b %d, %Y')}. Generate projected chronological timeline."
                     st.session_state.schedule_results = run_ai_with_progress(file_bytes, p_scan, prompt, "Timeline Generated!")
                     st.session_state.schedule_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Timeline", "results": st.session_state.schedule_results})
-                    save_json(uploaded_file.name, st.session_state.schedule_results, "schedule")
                 else: st.warning("Please select sheets first.")
-                    
             if st.session_state.schedule_results:
                 st.markdown('<div class="report-box" style="padding: 10px;">', unsafe_allow_html=True)
                 st.markdown(st.session_state.schedule_results)
-                
                 if st.button("📊 Expand to Excel/CSV", key="exp_csv"):
                     with st.spinner("Processing Gantt Data..."):
                         prompt = f"Convert this timeline to raw CSV format: Phase, Task Name, Duration (Days), Predecessors.\n\n{st.session_state.schedule_results}"
                         res = ai_client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
                         st.session_state.schedule_csv = res.text.replace('```csv', '').replace('```', '').strip()
                         st.rerun()
-                        
                 if st.session_state.schedule_csv:
                     st.download_button("📥 Download Excel (.csv)", st.session_state.schedule_csv, "Schedule.csv", "text/csv")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.divider()
-        
         with st.expander("🗄️ VDC Archives (Recall Past Scans)"):
             ha1, ha2, ha3 = st.columns(3)
             with ha1:
@@ -300,50 +299,42 @@ if uploaded_file:
                 for i, e in enumerate(st.session_state.audit_history):
                     with st.popover(f"🕒 {e['time']} Audit"):
                         for item in e['results']: st.write(f"- {item}")
-                        st.download_button("📥 Download PDF", create_pdf_report(uploaded_file.name, e['results'], "Audit"), f"Audit_{i}.pdf", key=f"dla_{i}")
+                        st.download_button("📥 Download PDF", create_pdf_report(st.session_state.current_file, e['results'], "Audit"), f"Audit_{i}.pdf", key=f"dla_{i}")
             with ha2:
                 st.markdown("**Material Takeoffs**")
                 for i, e in enumerate(st.session_state.takeoff_history):
                     with st.popover(f"🕒 {e['time']} Takeoff"):
                         for item in e['results']: st.write(f"- {item}")
-                        st.download_button("📥 Download PDF", create_pdf_report(uploaded_file.name, e['results'], "Takeoff"), f"Takeoff_{i}.pdf", key=f"dlt_{i}")
+                        st.download_button("📥 Download PDF", create_pdf_report(st.session_state.current_file, e['results'], "Takeoff"), f"Takeoff_{i}.pdf", key=f"dlt_{i}")
             with ha3:
                 st.markdown("**Project Timelines**")
                 for i, e in enumerate(st.session_state.schedule_history):
                     with st.popover(f"🕒 {e['time']} Timeline"):
                         st.markdown(e['results'])
-                        st.download_button("📥 Download PDF", create_pdf_report(uploaded_file.name, e['results'], "Timeline"), f"Timeline_{i}.pdf", key=f"dls_{i}")
+                        st.download_button("📥 Download PDF", create_pdf_report(st.session_state.current_file, e['results'], "Timeline"), f"Timeline_{i}.pdf", key=f"dls_{i}")
 
-    # ==========================================
-    # TAB 2: ESTIMATING & DOCS
-    # ==========================================
+    # --- TAB 2: ESTIMATING ---
     with tab_est:
         col_est, col_doc = st.columns([1.2, 1])
-        
         with col_est:
             st.markdown('<div class="tool-card">', unsafe_allow_html=True)
             st.markdown('<div class="section-title">🧮 AI Estimator</div>', unsafe_allow_html=True)
-            
             loc_multiplier = st.selectbox("Pricing Region:", ["National Average", "DMV Area (DC/MD/VA)", "New York", "Southeast"])
-            
             if st.button("🧮 Generate Baseline Estimate"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     prompt = f"Act as independent Chief Estimator. Location: {loc_multiplier}. Generate a trade-grouped estimate with line items and a budget summary. Format: Markdown."
                     st.session_state.est_results = run_ai_with_progress(file_bytes, p_scan, prompt, "Estimate Complete!")
                     st.session_state.est_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": loc_multiplier, "results": st.session_state.est_results})
-                    save_json(uploaded_file.name, st.session_state.est_history, "est_history")
                 else: st.warning("Please return to the VDC tab and select target sheets.")
-                    
             if st.session_state.est_results:
                 st.markdown(f'<div class="report-box">{st.session_state.est_results}</div>', unsafe_allow_html=True)
-                st.download_button("📥 Export Estimate PDF", create_pdf_report(uploaded_file.name, st.session_state.est_results, "Estimate"), "Estimate.pdf", "application/pdf")
+                st.download_button("📥 Export Estimate PDF", create_pdf_report(st.session_state.current_file, st.session_state.est_results, "Estimate"), "Estimate.pdf", "application/pdf")
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col_doc:
             st.markdown('<div class="tool-card">', unsafe_allow_html=True)
             st.markdown('<div class="section-title">📄 Document Intelligence</div>', unsafe_allow_html=True)
-            
             if doc_file:
                 if st.button("🔍 Analyze Document"):
                     d_bytes = doc_file.read()
@@ -351,13 +342,10 @@ if uploaded_file:
                     prompt = "Summarize the primary purpose, key data points, financial impacts, and critical risks in this document."
                     st.session_state.doc_intel_results = run_ai_with_progress(d_bytes, p_scan, prompt, "Document Scanned!")
                     st.session_state.intel_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": doc_file.name, "results": st.session_state.doc_intel_results})
-                    save_json(uploaded_file.name, st.session_state.intel_history, "intel_history")
-                    
                 if st.session_state.doc_intel_results: 
                     st.markdown(f'<div class="report-box" style="border-left-color: #8B5CF6;">{st.session_state.doc_intel_results}</div>', unsafe_allow_html=True)
-                    st.download_button("📥 Export Summary PDF", create_pdf_report(uploaded_file.name, st.session_state.doc_intel_results, "Doc Summary"), "Summary.pdf", "application/pdf")
-            else:
-                st.info("Upload a secondary PDF to Slot 3 in the sidebar.")
+                    st.download_button("📥 Export Summary PDF", create_pdf_report(st.session_state.current_file, st.session_state.doc_intel_results, "Doc Summary"), "Summary.pdf", "application/pdf")
+            else: st.info("Upload a secondary PDF to Slot 3 in the sidebar.")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.divider()
@@ -368,39 +356,32 @@ if uploaded_file:
                 for i, e in enumerate(st.session_state.est_history):
                     with st.popover(f"🕒 {e['time']} | {e['desc']}"):
                         st.markdown(e['results'])
-                        st.download_button("📥 PDF", create_pdf_report(uploaded_file.name, e['results'], "Estimate"), f"Est_{i}.pdf", key=f"dle_{i}")
+                        st.download_button("📥 PDF", create_pdf_report(st.session_state.current_file, e['results'], "Estimate"), f"Est_{i}.pdf", key=f"dle_{i}")
             with ea2:
                 st.markdown("**Document Summaries**")
                 for i, e in enumerate(st.session_state.intel_history):
                     with st.popover(f"🕒 {e['time']} | {e['desc']}"):
                         st.markdown(e['results'])
-                        st.download_button("📥 PDF", create_pdf_report(uploaded_file.name, e['results'], "Summary"), f"Doc_{i}.pdf", key=f"dli_{i}")
+                        st.download_button("📥 PDF", create_pdf_report(st.session_state.current_file, e['results'], "Summary"), f"Doc_{i}.pdf", key=f"dli_{i}")
 
-    # ==========================================
-    # TAB 3: ADMIN & SPECS
-    # ==========================================
+    # --- TAB 3: ADMIN ---
     with tab_admin:
         st.markdown('<div class="tool-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">📋 Submittal Engine</div>', unsafe_allow_html=True)
-        
         if spec_file:
             if st.button("🚀 Generate Submittal Register"):
-                s_bytes = spec_file.read()
-                s_total = get_pdf_info(s_bytes)
+                s_bytes = spec_file.read(); s_total = get_pdf_info(s_bytes)
                 p_scan = list(range(1, s_total + 1, 10))
                 prompt = "List required Shop Drawings, Product Data, and Samples. Start each with 'SUBMITTAL: '."
                 res = run_ai_with_progress(s_bytes, p_scan, prompt, "Register Generated!")
                 st.session_state.submittal_results = [l.replace("SUBMITTAL:", "").strip() for l in res.split("\n") if "SUBMITTAL:" in l]
                 st.session_state.submittal_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Scan", "results": st.session_state.submittal_results})
-                save_json(uploaded_file.name, st.session_state.submittal_history, "submittal_history")
-                
             if st.session_state.submittal_results:
                 st.markdown('<div class="report-box" style="border-left-color: #F59E0B;">', unsafe_allow_html=True)
                 for s in st.session_state.submittal_results: st.write(f"📁 {s}")
                 st.markdown('</div>', unsafe_allow_html=True)
-                st.download_button("📥 Export Submittal Log PDF", create_pdf_report(uploaded_file.name, st.session_state.submittal_results, "Submittal Register"), "Submittals.pdf", "application/pdf")
-        else:
-            st.info("Upload Specifications in Slot 2 to enable Submittal scanning.")
+                st.download_button("📥 Export Submittal Log PDF", create_pdf_report(st.session_state.current_file, st.session_state.submittal_results, "Submittal Register"), "Submittals.pdf", "application/pdf")
+        else: st.info("Upload Specifications in Slot 2 to enable Submittal scanning.")
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.divider()
@@ -409,7 +390,7 @@ if uploaded_file:
             for i, e in enumerate(st.session_state.submittal_history):
                 with st.popover(f"🕒 {e['time']} Register"):
                     for item in e['results']: st.write(f"- {item}")
-                    st.download_button("📥 PDF", create_pdf_report(uploaded_file.name, e['results'], "Submittal Log"), f"Sub_{i}.pdf", key=f"dls_{i}")
+                    st.download_button("📥 PDF", create_pdf_report(st.session_state.current_file, e['results'], "Submittal Log"), f"Sub_{i}.pdf", key=f"dls_{i}")
 
 # ==========================================
 # 8. LANDING PAGE
@@ -419,6 +400,7 @@ else:
     st.markdown('<h1 class="hero-title">🏗️ Site Pilot AI</h1>', unsafe_allow_html=True)
     st.markdown('<p class="hero-sub">Upload base drawings in the sidebar to initialize the project environment.</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 
