@@ -52,7 +52,8 @@ def get_pdf_info(file_bytes):
 
 @st.cache_data
 def convert_single_page(file_bytes, page_num):
-    return convert_from_bytes(file_bytes, first_page=page_num, last_page=page_num)[0]
+    # Added size compression: limits width to 1600px to prevent server RAM crashes
+    return convert_from_bytes(file_bytes, first_page=page_num, last_page=page_num, size=(1600, None))[0]
 
 def create_pdf_report(project_name, content, title):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -400,6 +401,7 @@ else:
     st.markdown('<h1 class="hero-title">🏗️ Site Pilot AI</h1>', unsafe_allow_html=True)
     st.markdown('<p class="hero-sub">Upload base drawings in the sidebar to initialize the project environment.</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 
