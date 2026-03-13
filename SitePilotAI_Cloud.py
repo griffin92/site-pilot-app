@@ -244,17 +244,18 @@ if uploaded_file:
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     
-                    # The upgraded "Superintendent" Prompt
+                    # The upgraded "Superintendent" Prompt (v2)
                     clash_prompt = """
                     Act as a veteran Commercial Construction Superintendent. Analyze these drawings for critical, project-halting constructability issues. 
                     
                     CRITICAL INSTRUCTION: IGNORE minor drafting errors, text overlaps, or missing standard dimensions. 
                     
-                    FOCUS EXCLUSIVELY ON THE FOLLOWING:
+                    FOCUS EXCLUSIVELY ON THE FOLLOWING 5 CATEGORIES:
                     1. Structural vs. MEP Clashes: (e.g., ductwork, grease lines, or plumbing trenches intersecting footings, steel beams, or shear walls).
                     2. Architectural vs. MEP Clashes: (e.g., drop ceiling heights that do not leave enough plenum space for specified HVAC equipment).
                     3. Code & Life Safety: (e.g., egress paths blocked by door swings, missing fire-rated partitions).
                     4. Missing Critical Details: (e.g., missing slab depression dimensions, missing structural grid tie-ins).
+                    5. Phasing & Scope Contradictions (THE FRANKENSTEIN RULE): Look for contradictions between "Existing/Demo" plans and "New Work" plans within the same trade. Flag if new approved drawings overlap, duplicate, or contradict existing approved drawings (especially in Electrical and Plumbing).
                     
                     Output only the major, expensive issues. Start every single line strictly with 'ISSUE: '. Be brief and punchy.
                     """
