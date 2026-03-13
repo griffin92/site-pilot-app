@@ -243,10 +243,28 @@ if uploaded_file:
             if st.button("🚀 Run Clash Audit"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
-                    res = run_ai_with_progress(file_bytes, p_scan, "Identify physical clashes or missing dimensions. Start each with 'ISSUE: '.", "Audit Complete!")
+                    
+                    # The upgraded "Superintendent" Prompt
+                    clash_prompt = """
+                    Act as a veteran Commercial Construction Superintendent. Analyze these drawings for critical, project-halting constructability issues. 
+                    
+                    CRITICAL INSTRUCTION: IGNORE minor drafting errors, text overlaps, or missing standard dimensions. 
+                    
+                    FOCUS EXCLUSIVELY ON THE FOLLOWING:
+                    1. Structural vs. MEP Clashes: (e.g., ductwork, grease lines, or plumbing trenches intersecting footings, steel beams, or shear walls).
+                    2. Architectural vs. MEP Clashes: (e.g., drop ceiling heights that do not leave enough plenum space for specified HVAC equipment).
+                    3. Code & Life Safety: (e.g., egress paths blocked by door swings, missing fire-rated partitions).
+                    4. Missing Critical Details: (e.g., missing slab depression dimensions, missing structural grid tie-ins).
+                    
+                    Output only the major, expensive issues. Start every single line strictly with 'ISSUE: '. Be brief and punchy.
+                    """
+                    
+                    res = run_ai_with_progress(file_bytes, p_scan, clash_prompt, "Audit Complete!")
                     st.session_state.audit_results = [l.replace("ISSUE:", "").strip() for l in res.split("\n") if "ISSUE:" in l]
                     st.session_state.audit_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Audit", "results": st.session_state.audit_results})
-                else: st.warning("Please select sheets first.")
+                else: 
+                    st.warning("Please select sheets first.")
+                    
             if st.session_state.audit_results:
                 st.markdown('<div class="report-box" style="border-left-color: #EF4444; padding: 10px;">', unsafe_allow_html=True)
                 for issue in st.session_state.audit_results: st.write(f"🚩 {issue}")
@@ -401,6 +419,7 @@ else:
     st.markdown('<h1 class="hero-title">🏗️ Site Pilot AI</h1>', unsafe_allow_html=True)
     st.markdown('<p class="hero-sub">Upload base drawings in the sidebar to initialize the project environment.</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 
