@@ -1,5 +1,6 @@
 import streamlit as st
 from google import genai
+from google.genai import types
 from PIL import Image
 from pdf2image import convert_from_bytes, pdfinfo_from_bytes
 import json
@@ -52,7 +53,7 @@ def get_pdf_info(file_bytes):
 
 @st.cache_data
 def convert_single_page(file_bytes, page_num):
-    # Added size compression: limits width to 1600px to prevent server RAM crashes
+    # Ram protection: limits to 1600px width
     return convert_from_bytes(file_bytes, first_page=page_num, last_page=page_num, size=(1600, None))[0]
 
 def create_pdf_report(project_name, content, title):
@@ -79,7 +80,8 @@ def create_pdf_report(project_name, content, title):
         
     return bytes(pdf.output())
 
-def run_ai_with_progress(file_bytes, target_pages, prompt_text, success_message="Task Complete!"):
+# UPGRADED: Now accepts separate System and User Prompts
+def run_ai_with_progress(file_bytes, target_pages, sys_prompt, usr_prompt, success_message="Task Complete!"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     d_imgs = []
@@ -91,11 +93,16 @@ def run_ai_with_progress(file_bytes, target_pages, prompt_text, success_message=
         progress_bar.progress(int(((idx + 1) / total_pages) * 85))
         
     status_text.markdown("**🧠 AI Engine Reviewing Scope...**")
-    d_imgs.insert(0, prompt_text)
+    d_imgs.insert(0, usr_prompt)
     
+    # 2026 Engine with System Instructions & Low Temperature
     response = ai_client.models.generate_content(
         model='gemini-2.5-pro',
-        contents=d_imgs
+        contents=d_imgs,
+        config=types.GenerateContentConfig(
+            system_instruction=sys_prompt,
+            temperature=0.2 
+        )
     )
     
     progress_bar.progress(100)
@@ -126,7 +133,7 @@ for key in keys_to_initialize:
 # ==========================================
 with st.sidebar:
     st.markdown("## 🏗️ Site Pilot")
-    st.caption("Enterprise OS v22.1")
+    st.caption("Enterprise OS v23.0")
     st.divider()
     
     st.markdown("### 📋 Document Uploads")
@@ -138,7 +145,6 @@ with st.sidebar:
     st.markdown("### 💾 Save & Restore")
     save_file = st.file_uploader("4️⃣ Restore Project (.json)", type=["json"], help="Upload a previously downloaded save file here to restore your work.")
     
-    # Export Current State to JSON
     export_state = {k: st.session_state[k] for k in keys_to_initialize if k in st.session_state and k != 'loaded_save_id'}
     json_state = json.dumps(export_state)
     
@@ -153,10 +159,8 @@ with st.sidebar:
 # ==========================================
 # 7. CLOUD MEMORY LOGIC
 # ==========================================
-# Handle new PDF uploads (Wipe old data if it's a completely new project)
 if uploaded_file and st.session_state.current_file != uploaded_file.name:
     st.session_state.current_file = uploaded_file.name
-    # Only wipe if we aren't actively restoring a save file
     if save_file is None or st.session_state.loaded_save_id != save_file.file_id:
         st.session_state.drawing_index = {}
         for h in ['audit', 'takeoff', 'schedule', 'est', 'intel', 'submittal']:
@@ -165,7 +169,6 @@ if uploaded_file and st.session_state.current_file != uploaded_file.name:
         st.session_state.schedule_csv = ""
     st.rerun()
 
-# Handle Save File Restoration (Bulletproof JSON decode)
 if save_file and st.session_state.loaded_save_id != save_file.file_id:
     try:
         saved_data = json.loads(save_file.getvalue().decode("utf-8"))
@@ -175,7 +178,7 @@ if save_file and st.session_state.loaded_save_id != save_file.file_id:
         st.success("✅ Project state restored successfully!")
         st.rerun()
     except Exception as e:
-        st.error("🚨 Invalid save file. Please upload a valid Site Pilot JSON.")
+        st.error("🚨 Invalid save file.")
 
 # ==========================================
 # 8. MAIN LOGIC
@@ -198,8 +201,13 @@ if uploaded_file:
                 for i in range(1, total_pages + 1):
                     img = convert_single_page(file_bytes, i)
                     try:
-                        prompt = "Extract the Sheet Number and Sheet Title from this title block. Output ONLY in this exact format: 'SheetNumber - SheetTitle'."
-                        res = ai_client.models.generate_content(model='gemini-2.5-pro', contents=[prompt, img])
+                        usr_prompt = "Extract the Sheet Number and Sheet Title from this title block. Output ONLY in this exact format: 'SheetNumber - SheetTitle'."
+                        sys_prompt = "You are a meticulous document archivist. Output strictly the requested format with no other text."
+                        res = ai_client.models.generate_content(
+                            model='gemini-2.5-pro', 
+                            contents=[usr_prompt, img],
+                            config=types.GenerateContentConfig(system_instruction=sys_prompt, temperature=0.1)
+                        )
                         new_index[str(i)] = res.text.strip().replace('\n', '')
                     except: new_index[str(i)] = f"Page {i}"
                     idx_prog.progress(int((i / total_pages) * 100))
@@ -244,28 +252,23 @@ if uploaded_file:
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     
-                    # The upgraded "Superintendent" Prompt (v2)
-                    clash_prompt = """
-                    Act as a veteran Commercial Construction Superintendent. Analyze these drawings for critical, project-halting constructability issues. 
+                    sys_prompt = """You are a Master MEP Coordinator and Veteran Commercial Superintendent with 25 years of field experience. Your job is to audit commercial construction drawings and identify massive, expensive, project-halting constructability issues before they hit the field.
+                    CRITICAL DIRECTIVE: You must strictly IGNORE minor drafting errors, text overlaps, spelling mistakes, or cosmetic issues. Do not waste time on fluff. 
+                    FOCUS EXCLUSIVELY ON THESE 6 CRITICAL FAILURE POINTS:
+                    1. Phasing & Scope Contradictions (The 'Frankenstein' Rule): Look for contradictions between "Existing/Demo" plans and "New Work" plans within the same trade. Flag if new approved drawings overlap, duplicate, or contradict existing approved drawings. 
+                    2. Equipment vs. MEP Disconnects: Verify that heavy commercial equipment (e.g., kitchen hoods, RTUs, specialized machinery) has the correct and corresponding electrical (voltage/phase), plumbing, gas, and structural support on the MEP sheets. Flag missing utility connections.
+                    3. Spatial Clashes & Interferences: Hunt for physical collisions. Look for ductwork, grease routing, or plumbing trenches intersecting footings, steel beams, shear walls, or load-bearing elements. Check if drop ceilings leave enough plenum space for specified HVAC equipment.
+                    4. Utility Capacity & Load Deficiencies: Flag potential overloading of existing utility infrastructure. Look for new heavy equipment being added to existing electrical panels without load calculations, or undersized water/gas lines for the specified fixture counts.
+                    5. Clearance, Code, & Life Safety: Hunt for missing working clearances around electrical panels and mechanical equipment. Flag ADA clearance violations, egress paths blocked by door swings, or missing fire-rated partition details.
+                    6. Missing Critical Dimensions & Details: Identify areas where the field team cannot physically build because important measurements are missing.
+                    OUTPUT FORMAT: Output only the major, expensive, schedule-killing issues. Start every single finding strictly with 'ISSUE: '. Be brutal, brief, and highly specific to the sheets and equipment tags provided."""
                     
-                    CRITICAL INSTRUCTION: IGNORE minor drafting errors, text overlaps, or missing standard dimensions. 
+                    usr_prompt = "Cross-reference the attached drawing sheets. Apply your 'Frankenstein Rule' and the other 5 critical failure points to hunt for scope, phasing, and physical contradictions. List the critical issues."
                     
-                    FOCUS EXCLUSIVELY ON THE FOLLOWING 5 CATEGORIES:
-                    1. Structural vs. MEP Clashes: (e.g., ductwork, grease lines, or plumbing trenches intersecting footings, steel beams, or shear walls).
-                    2. Architectural vs. MEP Clashes: (e.g., drop ceiling heights that do not leave enough plenum space for specified HVAC equipment).
-                    3. Code & Life Safety: (e.g., egress paths blocked by door swings, missing fire-rated partitions).
-                    4. Missing Critical Details: (e.g., missing slab depression dimensions, missing structural grid tie-ins).
-                    5. Phasing & Scope Contradictions (THE FRANKENSTEIN RULE): Look for contradictions between "Existing/Demo" plans and "New Work" plans within the same trade. Flag if new approved drawings overlap, duplicate, or contradict existing approved drawings (especially in Electrical and Plumbing).
-                    
-                    Output only the major, expensive issues. Start every single line strictly with 'ISSUE: '. Be brief and punchy.
-                    """
-                    
-                    res = run_ai_with_progress(file_bytes, p_scan, clash_prompt, "Audit Complete!")
+                    res = run_ai_with_progress(file_bytes, p_scan, sys_prompt, usr_prompt, "Audit Complete!")
                     st.session_state.audit_results = [l.replace("ISSUE:", "").strip() for l in res.split("\n") if "ISSUE:" in l]
                     st.session_state.audit_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Audit", "results": st.session_state.audit_results})
-                else: 
-                    st.warning("Please select sheets first.")
-                    
+                else: st.warning("Please select sheets first.")
             if st.session_state.audit_results:
                 st.markdown('<div class="report-box" style="border-left-color: #EF4444; padding: 10px;">', unsafe_allow_html=True)
                 for issue in st.session_state.audit_results: st.write(f"🚩 {issue}")
@@ -278,7 +281,9 @@ if uploaded_file:
             if st.button("📊 Material Takeoff"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
-                    res = run_ai_with_progress(file_bytes, p_scan, "Perform detailed material takeoff. Output continuous lines starting with 'TAKEOFF: '.", "Takeoff Complete!")
+                    sys_prompt = "You are a Senior Quantity Surveyor. Perform a highly accurate, structured material takeoff from the provided drawings."
+                    usr_prompt = "Perform detailed material takeoff. Output continuous lines starting with 'TAKEOFF: '."
+                    res = run_ai_with_progress(file_bytes, p_scan, sys_prompt, usr_prompt, "Takeoff Complete!")
                     st.session_state.takeoff_results = [l.replace("TAKEOFF:", "").strip() for l in res.split("\n") if "TAKEOFF:" in l]
                     st.session_state.takeoff_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Takeoff", "results": st.session_state.takeoff_results})
                 else: st.warning("Please select sheets first.")
@@ -294,8 +299,9 @@ if uploaded_file:
             if st.button("📅 Project Timeline"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
-                    prompt = f"Analyze drawings. Today is {datetime.now().strftime('%b %d, %Y')}. Generate projected chronological timeline."
-                    st.session_state.schedule_results = run_ai_with_progress(file_bytes, p_scan, prompt, "Timeline Generated!")
+                    sys_prompt = "You are a Master Project Scheduler specializing in commercial construction logic."
+                    usr_prompt = f"Analyze drawings. Today is {datetime.now().strftime('%b %d, %Y')}. Generate projected chronological timeline."
+                    st.session_state.schedule_results = run_ai_with_progress(file_bytes, p_scan, sys_prompt, usr_prompt, "Timeline Generated!")
                     st.session_state.schedule_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Timeline", "results": st.session_state.schedule_results})
                 else: st.warning("Please select sheets first.")
             if st.session_state.schedule_results:
@@ -303,8 +309,11 @@ if uploaded_file:
                 st.markdown(st.session_state.schedule_results)
                 if st.button("📊 Expand to Excel/CSV", key="exp_csv"):
                     with st.spinner("Processing Gantt Data..."):
-                        prompt = f"Convert this timeline to raw CSV format: Phase, Task Name, Duration (Days), Predecessors.\n\n{st.session_state.schedule_results}"
-                        res = ai_client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
+                        res = ai_client.models.generate_content(
+                            model='gemini-2.5-pro', 
+                            contents=[f"Convert this timeline to raw CSV format: Phase, Task Name, Duration (Days), Predecessors.\n\n{st.session_state.schedule_results}"],
+                            config=types.GenerateContentConfig(system_instruction="You are a data formatting bot.", temperature=0.1)
+                        )
                         st.session_state.schedule_csv = res.text.replace('```csv', '').replace('```', '').strip()
                         st.rerun()
                 if st.session_state.schedule_csv:
@@ -343,8 +352,9 @@ if uploaded_file:
             if st.button("🧮 Generate Baseline Estimate"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
-                    prompt = f"Act as independent Chief Estimator. Location: {loc_multiplier}. Generate a trade-grouped estimate with line items and a budget summary. Format: Markdown."
-                    st.session_state.est_results = run_ai_with_progress(file_bytes, p_scan, prompt, "Estimate Complete!")
+                    sys_prompt = f"You are a Chief Estimator for a massive commercial GC. Your pricing region multiplier logic is based on: {loc_multiplier}."
+                    usr_prompt = "Generate a trade-grouped baseline estimate with line items and a budget summary. Format: Markdown."
+                    st.session_state.est_results = run_ai_with_progress(file_bytes, p_scan, sys_prompt, usr_prompt, "Estimate Complete!")
                     st.session_state.est_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": loc_multiplier, "results": st.session_state.est_results})
                 else: st.warning("Please return to the VDC tab and select target sheets.")
             if st.session_state.est_results:
@@ -359,8 +369,9 @@ if uploaded_file:
                 if st.button("🔍 Analyze Document"):
                     d_bytes = doc_file.read()
                     p_scan = list(range(1, get_pdf_info(d_bytes) + 1))
-                    prompt = "Summarize the primary purpose, key data points, financial impacts, and critical risks in this document."
-                    st.session_state.doc_intel_results = run_ai_with_progress(d_bytes, p_scan, prompt, "Document Scanned!")
+                    sys_prompt = "You are a Senior Construction Attorney and Risk Manager."
+                    usr_prompt = "Summarize the primary purpose, key data points, financial impacts, and critical risks in this document."
+                    st.session_state.doc_intel_results = run_ai_with_progress(d_bytes, p_scan, sys_prompt, usr_prompt, "Document Scanned!")
                     st.session_state.intel_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": doc_file.name, "results": st.session_state.doc_intel_results})
                 if st.session_state.doc_intel_results: 
                     st.markdown(f'<div class="report-box" style="border-left-color: #8B5CF6;">{st.session_state.doc_intel_results}</div>', unsafe_allow_html=True)
@@ -392,8 +403,9 @@ if uploaded_file:
             if st.button("🚀 Generate Submittal Register"):
                 s_bytes = spec_file.read(); s_total = get_pdf_info(s_bytes)
                 p_scan = list(range(1, s_total + 1, 10))
-                prompt = "List required Shop Drawings, Product Data, and Samples. Start each with 'SUBMITTAL: '."
-                res = run_ai_with_progress(s_bytes, p_scan, prompt, "Register Generated!")
+                sys_prompt = "You are a Senior Project Engineer. Your job is to strictly extract submittal requirements from the project specifications."
+                usr_prompt = "List required Shop Drawings, Product Data, and Samples. Start each with 'SUBMITTAL: '."
+                res = run_ai_with_progress(s_bytes, p_scan, sys_prompt, usr_prompt, "Register Generated!")
                 st.session_state.submittal_results = [l.replace("SUBMITTAL:", "").strip() for l in res.split("\n") if "SUBMITTAL:" in l]
                 st.session_state.submittal_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Scan", "results": st.session_state.submittal_results})
             if st.session_state.submittal_results:
@@ -420,6 +432,7 @@ else:
     st.markdown('<h1 class="hero-title">🏗️ Site Pilot AI</h1>', unsafe_allow_html=True)
     st.markdown('<p class="hero-sub">Upload base drawings in the sidebar to initialize the project environment.</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 
