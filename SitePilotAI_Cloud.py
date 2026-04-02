@@ -309,10 +309,27 @@ if uploaded_file:
                 st.markdown(st.session_state.schedule_results)
                 if st.button("📊 Expand to Excel/CSV", key="exp_csv"):
                     with st.spinner("Processing Gantt Data..."):
+                        sys_prompt = "You are a master Data Engineer for a commercial GC. You convert text schedules into precise, import-ready CSV datasets."
+                        
+                        usr_prompt = f"""Convert this timeline into a raw CSV format specifically designed to be copy-pasted into the SCK Contractors Vertex42 Gantt Chart Excel Template.
+                        
+                        The CSV headers MUST be exactly:
+                        WBS, Task Name, Lead, Predecessors, Start Date, End Date, Work Days
+                        
+                        CRITICAL RULES:
+                        1. Assume a project start date of {datetime.now().strftime('%m/%d/%Y')}.
+                        2. Calculate realistic Start Dates and End Dates (MM/DD/YYYY) for every task based on dependencies and durations.
+                        3. Exclude weekends (Saturdays and Sundays) when calculating End Dates from Work Days.
+                        4. WBS should be sequential numbers (1, 2, 3...). 
+                        5. Output ONLY raw CSV text. Do not use ```csv wrappers or any other markdown.
+                        
+                        Timeline Data to Convert:
+                        {st.session_state.schedule_results}"""
+                        
                         res = ai_client.models.generate_content(
                             model='gemini-2.5-pro', 
-                            contents=[f"Convert this timeline to raw CSV format: Phase, Task Name, Duration (Days), Predecessors.\n\n{st.session_state.schedule_results}"],
-                            config=types.GenerateContentConfig(system_instruction="You are a data formatting bot.", temperature=0.1)
+                            contents=[usr_prompt],
+                            config=types.GenerateContentConfig(system_instruction=sys_prompt, temperature=0.1)
                         )
                         st.session_state.schedule_csv = res.text.replace('```csv', '').replace('```', '').strip()
                         st.rerun()
