@@ -7,6 +7,7 @@ import json
 import os
 import csv
 import io
+import gc
 from datetime import datetime
 from fpdf import FPDF 
 from fpdf.enums import XPos, YPos
@@ -80,34 +81,103 @@ def create_pdf_report(project_name, content, title):
         
     return bytes(pdf.output())
 
-# UPGRADED: Now accepts separate System and User Prompts
-def run_ai_with_progress(file_bytes, target_pages, sys_prompt, usr_prompt, success_message="Task Complete!"):
+# ==========================================
+# BATCHED AI PROCESSING (memory-safe rewrite)
+# ==========================================
+# WHY THIS CHANGED:
+# The original version converted every selected page to an image and held ALL of them
+# in memory at once before making a single Gemini call. On a 100+ sheet set, that could
+# push past Streamlit Cloud's free-tier memory ceiling (~1GB) and get the process killed
+# by the OS with no Python traceback -- which is exactly the "blank crash" behavior we
+# were debugging.
+#
+# This version processes pages in small batches. Each batch is converted, sent to Gemini,
+# and then explicitly released from memory before the next batch starts. If the job needed
+# more than one batch, a final lightweight TEXT-ONLY pass (no images, so it's cheap) merges
+# and de-duplicates the batch results into one consolidated output in the original format.
+#
+# batch_size=15 is a starting point. If you still see crashes, lower it (e.g. 10). If it's
+# fast and stable, you can raise it.
+def run_ai_with_progress(file_bytes, target_pages, sys_prompt, usr_prompt, success_message="Task Complete!", batch_size=15):
     progress_bar = st.progress(0)
     status_text = st.empty()
-    d_imgs = []
-    total_pages = len(target_pages)
-    
-    for idx, p_num in enumerate(target_pages):
-        status_text.markdown(f"**⚙️ Processing Document Data (Page {p_num})...**")
-        d_imgs.append(convert_single_page(file_bytes, p_num))
-        progress_bar.progress(int(((idx + 1) / total_pages) * 85))
-        
-    status_text.markdown("**🧠 AI Engine Reviewing Scope...**")
-    d_imgs.insert(0, usr_prompt)
-    
-    # 2026 Engine with System Instructions & Low Temperature
-    response = ai_client.models.generate_content(
-        model='gemini-2.5-pro',
-        contents=d_imgs,
-        config=types.GenerateContentConfig(
-            system_instruction=sys_prompt,
-            temperature=0.2 
-        )
+
+    batches = [target_pages[i:i + batch_size] for i in range(0, len(target_pages), batch_size)]
+    total_batches = len(batches)
+    batch_outputs = []
+
+    for b_idx, batch in enumerate(batches):
+        status_text.markdown(f"**⚙️ Processing Batch {b_idx + 1}/{total_batches} (Sheets {batch[0]}-{batch[-1]})...**")
+
+        d_imgs = [usr_prompt]
+        for p_num in batch:
+            d_imgs.append(convert_single_page(file_bytes, p_num))
+
+        # Tell the model it's only seeing a slice of the full set, so it doesn't assume
+        # completeness or reference sheets outside this batch.
+        if total_batches > 1:
+            d_imgs[0] = (
+                usr_prompt
+                + f"\n\n[NOTE: This is batch {b_idx + 1} of {total_batches}, covering sheets "
+                  f"{batch[0]} through {batch[-1]} only. Extract findings ONLY from these sheets. "
+                  f"The rest of the set is being processed in separate batches and merged afterward.]"
+            )
+
+        try:
+            response = ai_client.models.generate_content(
+                model='gemini-2.5-pro',
+                contents=d_imgs,
+                config=types.GenerateContentConfig(
+                    system_instruction=sys_prompt,
+                    temperature=0.2
+                )
+            )
+            batch_outputs.append(response.text)
+        except Exception as e:
+            status_text.warning(f"⚠️ Batch {b_idx + 1} (sheets {batch[0]}-{batch[-1]}) failed: {e}")
+            batch_outputs.append(f"[Batch {b_idx + 1}, sheets {batch[0]}-{batch[-1]} failed to process: {e}]")
+
+        # Explicitly release this batch's images before moving on
+        del d_imgs
+        gc.collect()
+
+        progress_bar.progress(int(((b_idx + 1) / total_batches) * 85))
+
+    # Only one batch was needed -- nothing to merge, return as-is
+    if total_batches == 1:
+        progress_bar.progress(100)
+        status_text.success(f"✅ {success_message}")
+        return batch_outputs[0]
+
+    # Multiple batches -- consolidate into one final result (text-only pass, no images)
+    status_text.markdown("**🧠 Consolidating results across all batches...**")
+    combined = "\n\n---BATCH BREAK---\n\n".join(
+        f"[Batch {i + 1}, sheets {b[0]}-{b[-1]}]\n{out}"
+        for i, (b, out) in enumerate(zip(batches, batch_outputs))
     )
-    
+    reduce_sys_prompt = (
+        sys_prompt
+        + "\n\nYou are now merging raw findings that were already extracted from separate "
+          "batches of the same drawing set. Combine them into ONE consolidated result in the "
+          "exact same output format as the original instructions. Remove duplicate or "
+          "near-duplicate entries that appear across batches, but do not drop unique findings."
+    )
+    reduce_usr_prompt = f"Merge and de-duplicate these batch findings into a single final result:\n\n{combined}"
+
+    try:
+        final_response = ai_client.models.generate_content(
+            model='gemini-2.5-pro',
+            contents=[reduce_usr_prompt],
+            config=types.GenerateContentConfig(system_instruction=reduce_sys_prompt, temperature=0.1)
+        )
+        result_text = final_response.text
+    except Exception as e:
+        status_text.warning(f"⚠️ Consolidation pass failed: {e}. Showing unmerged batch results instead.")
+        result_text = combined
+
     progress_bar.progress(100)
     status_text.success(f"✅ {success_message}")
-    return response.text
+    return result_text
 
 # ==========================================
 # 5. SESSION INITIALIZATION
