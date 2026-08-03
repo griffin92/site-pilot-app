@@ -3,3 +3,4 @@ google-genai
 Pillow
 pdf2image
 fpdf2
+openpyxl
