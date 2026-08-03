@@ -33,21 +33,91 @@ except Exception:
 MODEL_NAME = "gemini-3.6-flash"
 
 # ==========================================
-# 3. ENTERPRISE ADAPTIVE CSS
+# 3. SITE PILOT DESIGN SYSTEM
 # ==========================================
+# Palette, type, and layout language pulled from jobsite/blueprint vernacular
+# rather than generic SaaS defaults: structural navy, steel gray-blue, safety
+# orange, and a title-block signature element modeled on the info box found
+# on real architectural/construction drawings.
 st.markdown("""
     <style>
-    .stButton>button { border-radius: 6px; font-weight: 600; background-color: var(--primary-color); color: white; border: none; width: 100%; transition: all 0.2s; height: 3em; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    .stButton>button:hover { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .btn-clear>button { background-color: transparent; color: var(--text-color); border: 1px solid rgba(128, 128, 128, 0.4); box-shadow: none; }
-    .btn-clear>button:hover { background-color: rgba(128, 128, 128, 0.1); }
-    .tool-card { padding: 25px; border-radius: 10px; border: 1px solid rgba(128, 128, 128, 0.2); background-color: var(--secondary-background-color); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 20px; color: var(--text-color); }
-    .report-box { padding: 20px; border-radius: 6px; background-color: rgba(128, 128, 128, 0.05); border-left: 4px solid var(--primary-color); border-top: 1px solid rgba(128, 128, 128, 0.1); border-right: 1px solid rgba(128, 128, 128, 0.1); border-bottom: 1px solid rgba(128, 128, 128, 0.1); color: var(--text-color); margin-top: 15px; font-size: 0.95em; overflow-x: auto; }
-    .ref-header { background-color: var(--primary-color); color: white !important; padding: 8px 15px; border-radius: 6px 6px 0 0; font-weight: 600; font-size: 0.85em; letter-spacing: 0.5px; }
-    .status-bar { padding: 12px 20px; border-radius: 8px; background-color: var(--secondary-background-color); border: 1px solid rgba(128, 128, 128, 0.2); color: var(--text-color); margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; font-weight: 500; }
-    .hero-title { font-size: 3em; font-weight: 800; color: var(--text-color); margin-bottom: 0px; letter-spacing: -1px; }
-    .hero-sub { font-size: 1.2em; opacity: 0.8; color: var(--text-color); margin-bottom: 40px; font-weight: 400; }
-    .section-title { font-size: 1.4em; font-weight: 700; color: var(--text-color); margin-bottom: 5px; border-bottom: 2px solid rgba(128, 128, 128, 0.2); padding-bottom: 8px; }
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+    :root {
+        --sp-navy: #0E1B2E;
+        --sp-navy-2: #1B2A42;
+        --sp-steel: #52627A;
+        --sp-ink: #10151C;
+        --sp-safety: #E8590C;
+        --sp-verified: #1F7A4D;
+        --sp-border: rgba(16, 27, 46, 0.14);
+    }
+
+    html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
+    h1, h2, h3 { font-family: 'Space Grotesk', sans-serif; letter-spacing: -0.02em; }
+
+    /* ---- Buttons: stamped, technical, not rounded-pill default ---- */
+    .stButton>button {
+        border-radius: 3px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-weight: 600;
+        font-size: 0.82em;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        background-color: var(--sp-safety);
+        color: #ffffff;
+        border: none;
+        width: 100%;
+        height: 2.9em;
+        transition: filter 0.15s ease, box-shadow 0.15s ease;
+        box-shadow: none;
+    }
+    .stButton>button:hover { filter: brightness(1.08); transform: none; box-shadow: 0 2px 10px rgba(232, 89, 12, 0.28); }
+    .btn-clear>button { background-color: transparent; color: var(--sp-steel); border: 1px solid var(--sp-border); }
+    .btn-clear>button:hover { background-color: rgba(82, 98, 122, 0.08); filter: none; box-shadow: none; }
+
+    /* ---- Sidebar: dark nav rail ---- */
+    section[data-testid="stSidebar"] { background-color: var(--sp-navy); border-right: 1px solid rgba(255,255,255,0.06); }
+    section[data-testid="stSidebar"] * { color: #E8ECF1 !important; }
+    section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 { font-family: 'Space Grotesk', sans-serif; }
+    section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1); }
+
+    /* ---- Tabs: numbered workflow phases ---- */
+    div[data-testid="stTabs"] button[data-baseweb="tab"] {
+        font-family: 'IBM Plex Mono', monospace;
+        font-weight: 600;
+        font-size: 0.8em;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: var(--sp-steel);
+    }
+    div[data-testid="stTabs"] button[aria-selected="true"] { color: var(--sp-ink); border-bottom-color: var(--sp-safety) !important; }
+
+    /* ---- Tool cards: spec-sheet panels ---- */
+    .tool-card { padding: 22px 25px; border-radius: 4px; border: 1px solid var(--sp-border); border-top: 3px solid var(--sp-steel); background-color: var(--secondary-background-color); box-shadow: 0 1px 2px rgba(16,27,46,0.05); margin-bottom: 20px; color: var(--text-color); }
+    .module-tag { font-family: 'IBM Plex Mono', monospace; font-size: 0.68em; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sp-steel); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px dashed var(--sp-border); }
+
+    /* ---- Report output ---- */
+    .report-box { padding: 18px 20px; border-radius: 3px; background-color: rgba(82, 98, 122, 0.07); border-left: 3px solid var(--sp-steel); color: var(--text-color); margin-top: 14px; font-size: 0.94em; overflow-x: auto; }
+    .report-box.accent-safety { border-left-color: var(--sp-safety); }
+    .report-box.accent-verified { border-left-color: var(--sp-verified); }
+    .ref-header { background-color: var(--sp-navy); color: #ffffff !important; padding: 7px 14px; border-radius: 3px 3px 0 0; font-weight: 600; font-family: 'IBM Plex Mono', monospace; font-size: 0.75em; letter-spacing: 0.06em; text-transform: uppercase; }
+
+    /* ---- Title block: signature element, modeled on a drawing title block ---- */
+    .title-block { display: flex; border: 1.5px solid var(--sp-ink); border-radius: 2px; overflow: hidden; margin-bottom: 26px; background-color: var(--secondary-background-color); flex-wrap: wrap; }
+    .tb-field { padding: 10px 18px; border-right: 1px solid var(--sp-border); display: flex; flex-direction: column; justify-content: center; min-width: 140px; }
+    .tb-field:last-child { border-right: none; flex: 1; }
+    .tb-label { font-family: 'IBM Plex Mono', monospace; font-size: 0.62em; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sp-steel); margin-bottom: 2px; }
+    .tb-value { font-family: 'IBM Plex Mono', monospace; font-size: 0.92em; font-weight: 600; color: var(--sp-ink); }
+    .tb-brand { background-color: var(--sp-navy); justify-content: center; align-items: center; min-width: 66px; border-right: 1.5px solid var(--sp-ink); }
+    .tb-brand .tb-value { color: #ffffff; font-family: 'Space Grotesk', sans-serif; font-size: 1.05em; }
+
+    /* ---- Hero / landing ---- */
+    .hero-eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 0.78em; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sp-safety); margin-bottom: 14px; }
+    .hero-title { font-family: 'Space Grotesk', sans-serif; font-size: 3.1em; font-weight: 700; color: var(--sp-ink); margin-bottom: 6px; letter-spacing: -0.03em; }
+    .hero-sub { font-size: 1.12em; opacity: 0.75; color: var(--text-color); margin-bottom: 40px; font-weight: 400; max-width: 520px; margin-left: auto; margin-right: auto; }
+
+    .section-title { font-size: 1.22em; font-weight: 600; color: var(--text-color); margin-bottom: 5px; border-bottom: 2px solid var(--sp-border); padding-bottom: 8px; letter-spacing: -0.01em; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -208,24 +278,24 @@ for key in keys_to_initialize:
 # 6. SIDEBAR & SAVE SYSTEM
 # ==========================================
 with st.sidebar:
-    st.markdown("## 🏗️ Site Pilot")
-    st.caption("Enterprise OS v23.0")
+    st.markdown("## Site Pilot")
+    st.caption("FIELD OS — V24.0")
     st.divider()
     
-    st.markdown("### 📋 Document Uploads")
+    st.markdown("### Document Uploads")
     uploaded_file = st.file_uploader("1️⃣ Base Drawings (.pdf)", type=["pdf"])
     spec_file = st.file_uploader("2️⃣ Project Specs (.pdf)", type=["pdf"])
     doc_file = st.file_uploader("3️⃣ Legal/Contracts (.pdf)", type=["pdf"])
     
     st.divider()
-    st.markdown("### 💾 Save & Restore")
+    st.markdown("### Save & Restore")
     save_file = st.file_uploader("4️⃣ Restore Project (.json)", type=["json"], help="Upload a previously downloaded save file here to restore your work.")
     
     export_state = {k: st.session_state[k] for k in keys_to_initialize if k in st.session_state and k != 'loaded_save_id'}
     json_state = json.dumps(export_state)
     
     st.download_button(
-        label="💾 Download Save File",
+        label="Download Save File",
         data=json_state,
         file_name=f"SitePilot_Save_{datetime.now().strftime('%Y%m%d')}.json",
         mime="application/json",
@@ -266,13 +336,20 @@ if uploaded_file:
     if not st.session_state.drawing_index:
         st.session_state.drawing_index = {str(i): f"Page {i}" for i in range(1, total_pages + 1)}
 
-    st.markdown(f'<div class="status-bar"><span>📂 <strong>Project:</strong> {st.session_state.current_file}</span><span>📄 <strong>Total Sheets:</strong> {total_pages}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'''
+        <div class="title-block">
+            <div class="tb-field tb-brand"><div class="tb-value">SP</div></div>
+            <div class="tb-field"><div class="tb-label">Project</div><div class="tb-value">{st.session_state.current_file}</div></div>
+            <div class="tb-field"><div class="tb-label">Sheet Count</div><div class="tb-value">{total_pages}</div></div>
+            <div class="tb-field"><div class="tb-label">Date</div><div class="tb-value">{datetime.now().strftime('%m.%d.%Y')}</div></div>
+        </div>
+    ''', unsafe_allow_html=True)
 
-    with st.expander("🗂️ AI Drawing Indexer", expanded=False):
+    with st.expander("AI Drawing Indexer", expanded=False):
         st.markdown("Extract sheet names from title blocks to automatically rename dropdown menus.")
         c_idx1, c_idx2 = st.columns([1, 4])
         with c_idx1:
-            if st.button("🔍 Run Auto-Index"):
+            if st.button("Run Auto-Index"):
                 idx_prog = st.progress(0); idx_stat = st.empty(); new_index = {}
                 for i in range(1, total_pages + 1):
                     img = convert_single_page(file_bytes, i)
@@ -292,7 +369,7 @@ if uploaded_file:
                 st.rerun()
 
     page_opts = list(st.session_state.drawing_index.values())
-    tab_vdc, tab_est, tab_admin = st.tabs(["🗺️ Plan Room & VDC", "🧮 Estimating & Docs", "📋 Admin & Specs"])
+    tab_vdc, tab_est, tab_admin = st.tabs(["01 · Plan Room & VDC", "02 · Estimating & Docs", "03 · Admin & Specs"])
 
     # --- TAB 1: PLAN ROOM ---
     with tab_vdc:
@@ -305,7 +382,7 @@ if uploaded_file:
             target_docs = st.multiselect("Target Sheets:", page_opts, default=default_selection, label_visibility="collapsed")
         with c_sel2: 
             st.markdown('<div class="btn-clear">', unsafe_allow_html=True)
-            if st.button("🧹 Clear Workspace"):
+            if st.button("Clear Workspace"):
                 st.session_state.audit_results = []; st.session_state.takeoff_results = []
                 st.session_state.schedule_results = ""; st.session_state.schedule_csv = ""
                 st.rerun()
@@ -314,17 +391,18 @@ if uploaded_file:
 
         c_view, c_tools = st.columns([1.5, 1])
         with c_view:
-            st.markdown("#### 👁️ Sheet Viewer")
+            st.markdown("#### Sheet Viewer")
             selected_main = st.selectbox("Active View:", page_opts, label_visibility="collapsed")
             main_idx = int([k for k, v in st.session_state.drawing_index.items() if v == selected_main][0])
             st.markdown(f'<div class="ref-header">{selected_main}</div>', unsafe_allow_html=True)
             st.image(convert_single_page(file_bytes, main_idx), width='stretch')
 
         with c_tools:
-            st.markdown("#### ⚙️ VDC Engines")
+            st.markdown("#### VDC Engines")
             # Clash Engine
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
-            if st.button("🚀 Run Clash Audit"):
+            st.markdown('<div class="module-tag">Module 01 — Clash Audit</div>', unsafe_allow_html=True)
+            if st.button("Run Clash Audit"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     
@@ -346,7 +424,7 @@ if uploaded_file:
                     st.session_state.audit_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Audit", "results": st.session_state.audit_results})
                 else: st.warning("Please select sheets first.")
             if st.session_state.audit_results:
-                st.markdown('<div class="report-box" style="border-left-color: #EF4444; padding: 10px;">', unsafe_allow_html=True)
+                st.markdown('<div class="report-box accent-safety" style="padding: 10px;">', unsafe_allow_html=True)
                 for issue in st.session_state.audit_results: st.write(f"🚩 {issue}")
                 st.download_button("📥 Export PDF", create_pdf_report(st.session_state.current_file, st.session_state.audit_results, "Clash Audit"), "Audit.pdf", "application/pdf")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -354,7 +432,8 @@ if uploaded_file:
 
             # Takeoff Engine
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
-            if st.button("📊 Material Takeoff"):
+            st.markdown('<div class="module-tag">Module 02 — Material Takeoff</div>', unsafe_allow_html=True)
+            if st.button("Material Takeoff"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     sys_prompt = "You are a Senior Quantity Surveyor. Perform a highly accurate, structured material takeoff from the provided drawings."
@@ -364,7 +443,7 @@ if uploaded_file:
                     st.session_state.takeoff_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Takeoff", "results": st.session_state.takeoff_results})
                 else: st.warning("Please select sheets first.")
             if st.session_state.takeoff_results:
-                st.markdown('<div class="report-box" style="border-left-color: #10B981; padding: 10px;">', unsafe_allow_html=True)
+                st.markdown('<div class="report-box accent-verified" style="padding: 10px;">', unsafe_allow_html=True)
                 for item in st.session_state.takeoff_results: st.write(f"📦 {item}")
                 st.download_button("📥 Export PDF", create_pdf_report(st.session_state.current_file, st.session_state.takeoff_results, "Takeoff"), "Takeoff.pdf", "application/pdf")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -372,7 +451,8 @@ if uploaded_file:
 
             # Timeline Engine
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
-            if st.button("📅 Project Timeline"):
+            st.markdown('<div class="module-tag">Module 03 — Project Timeline</div>', unsafe_allow_html=True)
+            if st.button("Project Timeline"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     sys_prompt = "You are a Master Project Scheduler specializing in commercial construction logic."
@@ -383,7 +463,7 @@ if uploaded_file:
             if st.session_state.schedule_results:
                 st.markdown('<div class="report-box" style="padding: 10px;">', unsafe_allow_html=True)
                 st.markdown(st.session_state.schedule_results)
-                if st.button("📊 Expand to Excel/CSV", key="exp_csv"):
+                if st.button("Expand to Excel/CSV", key="exp_csv"):
                     with st.spinner("Processing Gantt Data..."):
                         sys_prompt = "You are a master Data Engineer for a commercial GC. You convert text schedules into precise, import-ready CSV datasets."
                         
@@ -440,9 +520,10 @@ if uploaded_file:
         col_est, col_doc = st.columns([1.2, 1])
         with col_est:
             st.markdown('<div class="tool-card">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">🧮 AI Estimator</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">AI Estimator</div>', unsafe_allow_html=True)
             loc_multiplier = st.selectbox("Pricing Region:", ["National Average", "DMV Area (DC/MD/VA)", "New York", "Southeast"])
-            if st.button("🧮 Generate Baseline Estimate"):
+            st.markdown('<div class="module-tag">Module 04 — Baseline Estimate</div>', unsafe_allow_html=True)
+            if st.button("Generate Baseline Estimate"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     sys_prompt = f"You are a Chief Estimator for a massive commercial GC. Your pricing region multiplier logic is based on: {loc_multiplier}."
@@ -457,9 +538,10 @@ if uploaded_file:
 
         with col_doc:
             st.markdown('<div class="tool-card">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">📄 Document Intelligence</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">Document Intelligence</div>', unsafe_allow_html=True)
             if doc_file:
-                if st.button("🔍 Analyze Document"):
+                st.markdown('<div class="module-tag">Module 05 — Document Intelligence</div>', unsafe_allow_html=True)
+                if st.button("Analyze Document"):
                     d_bytes = doc_file.read()
                     p_scan = list(range(1, get_pdf_info(d_bytes) + 1))
                     sys_prompt = "You are a Senior Construction Attorney and Risk Manager."
@@ -467,7 +549,7 @@ if uploaded_file:
                     st.session_state.doc_intel_results = run_ai_with_progress(d_bytes, p_scan, sys_prompt, usr_prompt, "Document Scanned!")
                     st.session_state.intel_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": doc_file.name, "results": st.session_state.doc_intel_results})
                 if st.session_state.doc_intel_results: 
-                    st.markdown(f'<div class="report-box" style="border-left-color: #8B5CF6;">{st.session_state.doc_intel_results}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="report-box">{st.session_state.doc_intel_results}</div>', unsafe_allow_html=True)
                     st.download_button("📥 Export Summary PDF", create_pdf_report(st.session_state.current_file, st.session_state.doc_intel_results, "Doc Summary"), "Summary.pdf", "application/pdf")
             else: st.info("Upload a secondary PDF to Slot 3 in the sidebar.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -491,9 +573,10 @@ if uploaded_file:
     # --- TAB 3: ADMIN ---
     with tab_admin:
         st.markdown('<div class="tool-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">📋 Submittal Engine</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Submittal Engine</div>', unsafe_allow_html=True)
         if spec_file:
-            if st.button("🚀 Generate Submittal Register"):
+            st.markdown('<div class="module-tag">Module 06 — Submittal Register</div>', unsafe_allow_html=True)
+            if st.button("Generate Submittal Register"):
                 s_bytes = spec_file.read(); s_total = get_pdf_info(s_bytes)
                 p_scan = list(range(1, s_total + 1, 10))
                 sys_prompt = "You are a Senior Project Engineer. Your job is to strictly extract submittal requirements from the project specifications."
@@ -502,7 +585,7 @@ if uploaded_file:
                 st.session_state.submittal_results = [l.replace("SUBMITTAL:", "").strip() for l in res.split("\n") if "SUBMITTAL:" in l]
                 st.session_state.submittal_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Scan", "results": st.session_state.submittal_results})
             if st.session_state.submittal_results:
-                st.markdown('<div class="report-box" style="border-left-color: #F59E0B;">', unsafe_allow_html=True)
+                st.markdown('<div class="report-box accent-safety">', unsafe_allow_html=True)
                 for s in st.session_state.submittal_results: st.write(f"📁 {s}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 st.download_button("📥 Export Submittal Log PDF", create_pdf_report(st.session_state.current_file, st.session_state.submittal_results, "Submittal Register"), "Submittals.pdf", "application/pdf")
@@ -521,11 +604,13 @@ if uploaded_file:
 # 8. LANDING PAGE
 # ==========================================
 else:
-    st.markdown('<div style="text-align:center; padding:100px;">', unsafe_allow_html=True)
-    st.markdown('<h1 class="hero-title">🏗️ Site Pilot AI</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="hero-sub">Upload base drawings in the sidebar to initialize the project environment.</p>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
+    st.markdown('''
+        <div style="text-align:center; padding:110px 20px 100px;">
+            <div class="hero-eyebrow">Field Intelligence System</div>
+            <h1 class="hero-title">Site Pilot AI</h1>
+            <p class="hero-sub">Upload base drawings in the sidebar to initialize the project environment.</p>
+        </div>
+    ''', unsafe_allow_html=True)
 
 
 
