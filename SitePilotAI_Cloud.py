@@ -234,7 +234,7 @@ def fill_gantt_template(project_start, tasks):
     wb.save(buf)
     return buf.getvalue(), truncated
 
-
+def create_pdf_report(project_name, content, title):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
