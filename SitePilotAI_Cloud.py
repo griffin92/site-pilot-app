@@ -79,7 +79,23 @@ st.markdown("""
 
     /* ---- Sidebar: dark nav rail ---- */
     section[data-testid="stSidebar"] { background-color: var(--sp-navy); border-right: 1px solid rgba(255,255,255,0.06); }
-    section[data-testid="stSidebar"] * { color: #E8ECF1 !important; }
+    /* Light text for labels/headings/captions sitting directly on the navy
+       background -- deliberately NOT a blanket "*" rule, since that also
+       forced light text onto native controls (like the file uploader's
+       Browse button) that keep their own light background, killing contrast. */
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] span,
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3,
+    section[data-testid="stSidebar"] small,
+    section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] { color: #E8ECF1; }
+    /* Native buttons/controls (file uploader Browse button, etc.) keep
+       their own light background -- force dark text so it stays legible
+       instead of inheriting the light-on-light from the rule above. */
+    section[data-testid="stSidebar"] button:not(.stButton button):not([kind="primary"]) { color: var(--sp-ink) !important; }
+    section[data-testid="stSidebar"] button:not(.stButton button):not([kind="primary"]) * { color: var(--sp-ink) !important; }
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 { font-family: 'Space Grotesk', sans-serif; }
     section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1); }
 
@@ -234,6 +250,145 @@ def fill_gantt_template(project_start, tasks):
     wb.save(buf)
     return buf.getvalue(), truncated
 
+# ==========================================
+# DRAWING Q&A ENGINE
+# ==========================================
+# Targeted lookup, as opposed to the one-shot deep-scan engines above.
+# Two-stage design:
+#   1. (Optional) Route: a cheap TEXT-ONLY call reads the sheet index and
+#      picks which sheets likely hold the answer. Skipped if the Auto-Index
+#      hasn't been run, since generic "Page 7" titles carry no signal.
+#   2. Answer: only the routed sheets get converted to images and sent.
+# This keeps a 100+ sheet set from being brute-forced on every question --
+# faster, cheaper, and more accurate, since the model isn't wading through
+# 90 irrelevant sheets looking for a walk-in cooler.
+
+QA_SYSTEM_PROMPT = """You are a Veteran Commercial Construction Superintendent and Project Manager with 25+ years in the field, reading a set of construction drawings to answer a specific question from the field team.
+
+HOW YOU READ DRAWINGS:
+- You read floor plans, RCPs, elevations, sections, details, schedules (door/window/finish/equipment/panel), keynotes, general notes, and legends.
+- You cross-reference: a room's finish comes from the Finish Schedule keyed to the room tag; equipment power comes from the Equipment Schedule cross-referenced to the Panel Schedule; dimensions come from dimension strings, not from eyeballing.
+- You know equipment tags (WIC = walk-in cooler, RTU, MAU, EF, WH, etc.), and you connect a tag on a plan to its row in the corresponding schedule.
+
+ACCURACY RULES -- THESE ARE ABSOLUTE:
+1. NEVER invent, estimate, or infer a number that is not on the drawings. A wrong dimension causes real money and rework in the field.
+2. Distinguish clearly between:
+   - LABELED: the value is explicitly printed on the drawing (dimension string, schedule cell, note). State it plainly.
+   - DERIVED: you calculated it from labeled values (e.g. area = labeled length x labeled width). Show the math and label it as calculated.
+   - NOT SHOWN: the information is not on the sheets provided. Say so directly.
+3. NEVER scale off a drawing to produce a dimension. If a dimension isn't labeled, say it isn't labeled and name which sheet would likely carry it.
+4. ALWAYS cite the sheet you got each fact from, using the sheet number/name given in the sheet label.
+5. If sheets conflict with each other, say so explicitly and flag it as a coordination issue -- do not silently pick one.
+6. If the question can't be answered from the sheets provided, say exactly that and name which sheet type would have it (e.g. "Not on these sheets -- check the Equipment Schedule, typically on M-601 or E-601").
+
+TONE: Direct, field-practical, brief. Answer like a superintendent briefing another superintendent. Lead with the answer, then the supporting reference. No preamble, no restating the question."""
+
+def select_relevant_sheets(question, drawing_index, candidate_pages, max_sheets=8):
+    """Cheap text-only routing pass: picks likely relevant sheets by title.
+    Returns None if the index has no real titles (Auto-Index not run yet)."""
+    named = [p for p in candidate_pages
+             if not str(drawing_index.get(str(p), "")).strip().lower().startswith("page ")]
+    if len(named) < max(3, len(candidate_pages) * 0.5):
+        return None  # index is mostly unnamed -- routing would be guesswork
+
+    catalog = "\n".join(f"{p} = {drawing_index.get(str(p), f'Page {p}')}" for p in candidate_pages)
+    sys_p = "You route construction questions to the correct drawing sheets. You output only JSON."
+    usr_p = f"""A field question needs answering from a drawing set. Below is the sheet index.
+
+Pick the sheets most likely to contain the answer. Think about which discipline and sheet type would carry this information (plans, schedules, details, RCPs, panel schedules, etc.). Include schedule sheets when the question involves equipment, finishes, doors, or power.
+
+Return ONLY a JSON array of sheet page numbers, most relevant first, maximum {max_sheets} entries. Example: [12, 45, 46]
+
+QUESTION: {question}
+
+SHEET INDEX (page number = sheet name):
+{catalog}"""
+    try:
+        res = ai_client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[usr_p],
+            config=types.GenerateContentConfig(
+                system_instruction=sys_p,
+                temperature=0.1,
+                response_mime_type="application/json"
+            )
+        )
+        picked = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
+        valid = [int(p) for p in picked if int(p) in candidate_pages]
+        return valid[:max_sheets] or None
+    except Exception:
+        return None  # routing is an optimization -- fall back to full scan
+
+def ask_drawings(file_bytes, pages, question, drawing_index, prior_turns=None, batch_size=8):
+    """Answers a question against the given sheets, batching to stay memory-safe."""
+    batches = [pages[i:i + batch_size] for i in range(0, len(pages), batch_size)]
+    total_batches = len(batches)
+    findings = []
+
+    context = ""
+    if prior_turns:
+        recent = prior_turns[-3:]
+        context = "\n\nEARLIER IN THIS CONVERSATION (for context on follow-up questions):\n" + "\n".join(
+            f"Q: {t['q']}\nA: {t['a'][:400]}" for t in recent
+        )
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    for b_idx, batch in enumerate(batches):
+        labels = ", ".join(drawing_index.get(str(p), f"Page {p}") for p in batch)
+        status_text.markdown(f"**Reading sheets {b_idx + 1}/{total_batches}: {labels[:90]}...**")
+
+        usr_p = (
+            f"QUESTION FROM THE FIELD: {question}{context}\n\n"
+            f"The attached images are these sheets, in order: {labels}.\n"
+            f"Refer to sheets by these names when citing.\n\n"
+            f"Answer the question from these sheets. If the answer is not on these particular "
+            f"sheets, respond with exactly: NOT_ON_THESE_SHEETS"
+        )
+        imgs = [usr_p]
+        for p_num in batch:
+            imgs.append(convert_single_page(file_bytes, p_num))
+
+        try:
+            res = ai_client.models.generate_content(
+                model=MODEL_NAME,
+                contents=imgs,
+                config=types.GenerateContentConfig(system_instruction=QA_SYSTEM_PROMPT, temperature=0.1)
+            )
+            txt = res.text.strip()
+            if "NOT_ON_THESE_SHEETS" not in txt.upper():
+                findings.append(txt)
+        except Exception as e:
+            status_text.warning(f"Sheet group {b_idx + 1} couldn't be read: {e}")
+
+        del imgs
+        gc.collect()
+        progress_bar.progress(int(((b_idx + 1) / total_batches) * 90))
+
+    progress_bar.progress(100)
+    status_text.empty()
+
+    if not findings:
+        return ("Not found on the sheets searched. Try selecting additional sheets, or run the "
+                "AI Drawing Indexer first so the assistant can route your question to the right sheets.")
+    if len(findings) == 1:
+        return findings[0]
+
+    # Several sheet groups had partial answers -- reconcile into one
+    merged = "\n\n---\n\n".join(findings)
+    try:
+        res = ai_client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[f"QUESTION: {question}\n\nPartial answers found on different sheets:\n\n{merged}\n\n"
+                      f"Combine these into one direct answer. Keep every sheet citation. If the partial "
+                      f"answers conflict, say so explicitly and flag it as a coordination issue."],
+            config=types.GenerateContentConfig(system_instruction=QA_SYSTEM_PROMPT, temperature=0.1)
+        )
+        return res.text
+    except Exception:
+        return merged
+
 def create_pdf_report(project_name, content, title):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
@@ -363,7 +518,8 @@ keys_to_initialize = [
     'audit_results', 'takeoff_results', 'schedule_results', 'schedule_csv', 
     'doc_intel_results', 'est_results', 'submittal_results', 'drawing_index', 
     'audit_history', 'takeoff_history', 'schedule_history', 'intel_history', 
-    'est_history', 'submittal_history', 'current_file', 'loaded_save_id'
+    'est_history', 'submittal_history', 'current_file', 'loaded_save_id',
+    'qa_history'
 ]
 
 for key in keys_to_initialize:
@@ -418,6 +574,7 @@ if uploaded_file and st.session_state.current_file != uploaded_file.name:
             st.session_state[f"{h}_history"] = []
             st.session_state[f"{h}_results"] = [] if h in ['audit', 'takeoff', 'submittal'] else ""
         st.session_state.schedule_csv = ""
+        st.session_state.qa_history = []
     st.rerun()
 
 if save_file and st.session_state.loaded_save_id != save_file.file_id:
@@ -474,7 +631,7 @@ if uploaded_file:
                 st.rerun()
 
     page_opts = list(st.session_state.drawing_index.values())
-    tab_vdc, tab_est, tab_admin = st.tabs(["01 · Plan Room & VDC", "02 · Estimating & Docs", "03 · Admin & Specs"])
+    tab_vdc, tab_est, tab_admin, tab_qa = st.tabs(["01 · Plan Room & VDC", "02 · Estimating & Docs", "03 · Admin & Specs", "04 · Ask the Drawings"])
 
     # --- TAB 1: PLAN ROOM ---
     with tab_vdc:
@@ -690,6 +847,94 @@ if uploaded_file:
                 with st.popover(f"🕒 {e['time']} Register"):
                     for item in e['results']: st.write(f"- {item}")
                     st.download_button("📥 PDF", create_pdf_report(st.session_state.current_file, e['results'], "Submittal Log"), f"Sub_{i}.pdf", key=f"dls_{i}")
+
+    # --- TAB 4: ASK THE DRAWINGS ---
+    with tab_qa:
+        st.markdown('<div class="tool-card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Ask the Drawings</div>', unsafe_allow_html=True)
+        st.markdown('<div class="module-tag">Module 07 — Field Q&amp;A</div>', unsafe_allow_html=True)
+        st.caption("Ask about dimensions, areas, finishes, equipment, power requirements, clearances — "
+                   "anything on the sheets. Answers cite the sheet they came from.")
+
+        indexed = any(not str(v).strip().lower().startswith("page ") for v in st.session_state.drawing_index.values())
+
+        c_qa1, c_qa2 = st.columns([3, 1])
+        with c_qa1:
+            smart_route = st.checkbox(
+                "Smart sheet routing (recommended)",
+                value=indexed,
+                disabled=not indexed,
+                help="Finds the sheets most likely to hold the answer before reading them. "
+                     "Requires running the AI Drawing Indexer first so sheets have real names."
+            )
+        with c_qa2:
+            st.markdown('<div class="btn-clear">', unsafe_allow_html=True)
+            if st.button("Clear Conversation", key="clear_qa"):
+                st.session_state.qa_history = []
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        if not indexed:
+            st.info("Run the **AI Drawing Indexer** above to enable smart routing — without it, "
+                    "every question scans all your selected sheets, which is slower on a large set.")
+
+        with st.form("qa_form", clear_on_submit=True):
+            question = st.text_input(
+                "Question",
+                placeholder="e.g. What are the dimensions of the walk-in cooler?",
+                label_visibility="collapsed"
+            )
+            asked = st.form_submit_button("Ask")
+
+        if asked and question.strip():
+            if not target_docs:
+                st.warning("Select target sheets in the Plan Room tab first (or check 'Select Entire Drawing Set').")
+            else:
+                candidate_pages = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
+                search_pages = candidate_pages
+                routed = None
+                if smart_route and indexed:
+                    with st.spinner("Locating relevant sheets..."):
+                        routed = select_relevant_sheets(question, st.session_state.drawing_index, candidate_pages)
+                    if routed:
+                        search_pages = routed
+                        names = ", ".join(st.session_state.drawing_index.get(str(p), f"Page {p}") for p in routed)
+                        st.caption(f"Searching: {names}")
+
+                answer = ask_drawings(
+                    file_bytes, search_pages, question.strip(),
+                    st.session_state.drawing_index,
+                    prior_turns=st.session_state.qa_history
+                )
+                st.session_state.qa_history.append({
+                    "time": datetime.now().strftime("%I:%M %p"),
+                    "q": question.strip(),
+                    "a": answer,
+                    "sheets": ", ".join(st.session_state.drawing_index.get(str(p), f"Page {p}") for p in search_pages)
+                })
+                st.rerun()
+
+        # Conversation, most recent first
+        for turn in reversed(st.session_state.qa_history):
+            st.markdown(
+                f'<div class="ref-header" style="border-radius:3px; margin-top:16px;">{turn["q"]}</div>',
+                unsafe_allow_html=True
+            )
+            st.markdown('<div class="report-box" style="margin-top:0;">', unsafe_allow_html=True)
+            st.markdown(turn["a"])
+            st.caption(f"{turn['time']} · sheets searched: {turn['sheets']}")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        if st.session_state.qa_history:
+            transcript = "\n\n".join(
+                f"Q: {t['q']}\nSheets: {t['sheets']}\n\nA: {t['a']}" for t in st.session_state.qa_history
+            )
+            st.download_button(
+                "📥 Export Q&A Transcript",
+                create_pdf_report(st.session_state.current_file, transcript, "Drawing Q&A"),
+                "Drawing_QA.pdf", "application/pdf", key="dl_qa"
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # 8. LANDING PAGE
