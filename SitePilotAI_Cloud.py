@@ -3,12 +3,13 @@ from google import genai
 from google.genai import types
 from PIL import Image
 from pdf2image import convert_from_bytes, pdfinfo_from_bytes
+import openpyxl
 import json
 import os
 import csv
 import io
 import gc
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from fpdf import FPDF 
 from fpdf.enums import XPos, YPos
 
@@ -133,7 +134,107 @@ def convert_single_page(file_bytes, page_num):
     # Ram protection: limits to 1600px width
     return convert_from_bytes(file_bytes, first_page=page_num, last_page=page_num, size=(1600, None))[0]
 
-def create_pdf_report(project_name, content, title):
+# ==========================================
+# GANTT CHART GENERATION (Vertex42 template fill)
+# ==========================================
+# Fills the boss's exact Vertex42 Gantt template rather than generating a
+# generic spreadsheet -- every formula in the template (End date, Cal Days,
+# Days Done/Left) stays exactly as-is. We only write the plain input cells:
+# Project Start Date (G6) and, per task row, WBS/Task/Predecessors/Start/
+# Work Days/% Done. Start dates are computed here in Python (not by the AI)
+# since LLMs are unreliable at business-day arithmetic.
+GANTT_TEMPLATE_PATH = "templates/gantt_template.xlsx"
+GANTT_TASK_START_ROW = 14
+GANTT_MAX_TASK_ROWS = 50  # template extended to support WBS rows 14-63
+
+def add_business_days(start_date, work_days):
+    """Mirrors the template's WORKDAY(start, work_days-1) formula."""
+    if work_days <= 1:
+        return start_date
+    d = start_date
+    remaining = work_days - 1
+    while remaining > 0:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            remaining -= 1
+    return d
+
+def next_business_day(d):
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+def schedule_tasks(project_start, tasks):
+    """Computes start/end dates sequentially from predecessors."""
+    end_by_wbs = {}
+    for t in tasks:
+        preds = t.get("predecessors") or []
+        pred_ends = [end_by_wbs[p] for p in preds if p in end_by_wbs]
+        start = next_business_day(max(pred_ends) + timedelta(days=1)) if pred_ends else project_start
+        end = add_business_days(start, max(1, t.get("work_days", 1)))
+        t["start"] = start
+        t["end"] = end
+        end_by_wbs[t["wbs"]] = end
+    return tasks
+
+def extract_tasks_json(schedule_text):
+    """Converts the free-text AI timeline into a structured task list using
+    JSON mode -- far more reliable than parsing CSV text the model wrote."""
+    sys_prompt = "You are a data extraction engine. Convert construction schedules into structured task lists."
+    usr_prompt = f"""Extract every task from this construction timeline into a JSON array.
+Each item must have exactly these fields:
+- "wbs": sequential integer starting at 1
+- "task": short task name (string)
+- "work_days": estimated duration in working days (integer, minimum 1)
+- "predecessors": array of WBS integers this task depends on (empty array if none)
+
+Output ONLY the raw JSON array, no markdown fences, no other text.
+
+Timeline:
+{schedule_text}"""
+    response = ai_client.models.generate_content(
+        model=MODEL_NAME,
+        contents=[usr_prompt],
+        config=types.GenerateContentConfig(
+            system_instruction=sys_prompt,
+            temperature=0.1,
+            response_mime_type="application/json"
+        )
+    )
+    raw = response.text.strip().replace('```json', '').replace('```', '').strip()
+    return json.loads(raw)
+
+def fill_gantt_template(project_start, tasks):
+    """Opens the bundled Vertex42 template and writes only the input cells,
+    leaving every locked formula untouched. Returns the .xlsx as bytes."""
+    wb = openpyxl.load_workbook(GANTT_TEMPLATE_PATH)
+    ws = wb["GanttChart"]
+    ws["G6"] = project_start
+
+    scheduled = schedule_tasks(project_start, tasks)
+    truncated = len(scheduled) > GANTT_MAX_TASK_ROWS
+    if truncated:
+        scheduled = scheduled[:GANTT_MAX_TASK_ROWS]
+
+    for i in range(GANTT_MAX_TASK_ROWS):
+        row = GANTT_TASK_START_ROW + i
+        if i < len(scheduled):
+            t = scheduled[i]
+            ws.cell(row=row, column=1).value = t["wbs"]
+            ws.cell(row=row, column=2).value = t["task"]
+            ws.cell(row=row, column=4).value = ",".join(str(p) for p in t.get("predecessors", [])) or None
+            ws.cell(row=row, column=7).value = t["start"]
+            ws.cell(row=row, column=9).value = max(1, t.get("work_days", 1))
+            ws.cell(row=row, column=10).value = 0
+        else:
+            for col in (1, 2, 4, 7, 9, 10):
+                ws.cell(row=row, column=col).value = None
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue(), truncated
+
+
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -291,7 +392,11 @@ with st.sidebar:
     st.markdown("### Save & Restore")
     save_file = st.file_uploader("4️⃣ Restore Project (.json)", type=["json"], help="Upload a previously downloaded save file here to restore your work.")
     
-    export_state = {k: st.session_state[k] for k in keys_to_initialize if k in st.session_state and k != 'loaded_save_id'}
+    # schedule_csv now holds binary .xlsx bytes (not text), which isn't
+    # JSON-serializable -- excluded from the save file. After restoring a
+    # project, just click "Generate Gantt Chart" again to rebuild it from
+    # the preserved schedule_results.
+    export_state = {k: st.session_state[k] for k in keys_to_initialize if k in st.session_state and k not in ('loaded_save_id', 'schedule_csv')}
     json_state = json.dumps(export_state)
     
     st.download_button(
@@ -452,45 +557,31 @@ if uploaded_file:
             # Timeline Engine
             st.markdown('<div class="tool-card" style="padding: 15px;">', unsafe_allow_html=True)
             st.markdown('<div class="module-tag">Module 03 — Project Timeline</div>', unsafe_allow_html=True)
+            schedule_start_date = st.date_input("Project Start Date", value=datetime.now().date(), key="schedule_start_date")
             if st.button("Project Timeline"):
                 if target_docs:
                     p_scan = [int([k for k, v in st.session_state.drawing_index.items() if v == d][0]) for d in target_docs]
                     sys_prompt = "You are a Master Project Scheduler specializing in commercial construction logic."
-                    usr_prompt = f"Analyze drawings. Today is {datetime.now().strftime('%b %d, %Y')}. Generate projected chronological timeline."
+                    usr_prompt = f"Analyze drawings. The project start date is {schedule_start_date.strftime('%b %d, %Y')}. Generate a projected chronological construction timeline starting from this date, broken into discrete sequential tasks."
                     st.session_state.schedule_results = run_ai_with_progress(file_bytes, p_scan, sys_prompt, usr_prompt, "Timeline Generated!")
                     st.session_state.schedule_history.insert(0, {"time": datetime.now().strftime("%I:%M %p"), "desc": "Timeline", "results": st.session_state.schedule_results})
                 else: st.warning("Please select sheets first.")
             if st.session_state.schedule_results:
                 st.markdown('<div class="report-box" style="padding: 10px;">', unsafe_allow_html=True)
                 st.markdown(st.session_state.schedule_results)
-                if st.button("Expand to Excel/CSV", key="exp_csv"):
-                    with st.spinner("Processing Gantt Data..."):
-                        sys_prompt = "You are a master Data Engineer for a commercial GC. You convert text schedules into precise, import-ready CSV datasets."
-                        
-                        usr_prompt = f"""Convert this timeline into a raw CSV format specifically designed to be copy-pasted into the SCK Contractors Vertex42 Gantt Chart Excel Template.
-                        
-                        The CSV headers MUST be exactly:
-                        WBS, Task Name, Lead, Predecessors, Start Date, End Date, Work Days
-                        
-                        CRITICAL RULES:
-                        1. Assume a project start date of {datetime.now().strftime('%m/%d/%Y')}.
-                        2. Calculate realistic Start Dates and End Dates (MM/DD/YYYY) for every task based on dependencies and durations.
-                        3. Exclude weekends (Saturdays and Sundays) when calculating End Dates from Work Days.
-                        4. WBS should be sequential numbers (1, 2, 3...). 
-                        5. Output ONLY raw CSV text. Do not use ```csv wrappers or any other markdown.
-                        
-                        Timeline Data to Convert:
-                        {st.session_state.schedule_results}"""
-                        
-                        res = ai_client.models.generate_content(
-                            model=MODEL_NAME, 
-                            contents=[usr_prompt],
-                            config=types.GenerateContentConfig(system_instruction=sys_prompt, temperature=0.1)
-                        )
-                        st.session_state.schedule_csv = res.text.replace('```csv', '').replace('```', '').strip()
+                if st.button("Generate Gantt Chart (.xlsx)", key="gen_gantt"):
+                    with st.spinner("Building Gantt chart from your template..."):
+                        try:
+                            tasks = extract_tasks_json(st.session_state.schedule_results)
+                            xlsx_bytes, truncated = fill_gantt_template(schedule_start_date, tasks)
+                            st.session_state.schedule_csv = xlsx_bytes
+                            if truncated:
+                                st.warning(f"This timeline has more than {GANTT_MAX_TASK_ROWS} tasks — the template supports {GANTT_MAX_TASK_ROWS} rows, so it was truncated to fit. Consider grouping smaller tasks together.")
+                        except Exception as e:
+                            st.error(f"Couldn't build the Gantt chart: {e}")
                         st.rerun()
                 if st.session_state.schedule_csv:
-                    st.download_button("📥 Download Excel (.csv)", st.session_state.schedule_csv, "Schedule.csv", "text/csv")
+                    st.download_button("Download Gantt Chart (.xlsx)", st.session_state.schedule_csv, "Project_Schedule.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.divider()
