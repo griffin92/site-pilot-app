@@ -26,6 +26,12 @@ except Exception:
     st.error("🚨 CONFIGURATION ERROR: GEMINI_API_KEY not found in Streamlit Cloud Secrets. Please add it to your app settings.")
     st.stop()
 
+# Single source of truth for the model name. gemini-2.5-pro is being retired
+# (Oct 2026) and was slower for this workload anyway. gemini-3.6-flash is
+# Google's current fast/workhorse tier -- built for latency and multi-step
+# jobs like ours, and cheaper per token than 2.5-pro was.
+MODEL_NAME = "gemini-3.6-flash"
+
 # ==========================================
 # 3. ENTERPRISE ADAPTIVE CSS
 # ==========================================
@@ -125,7 +131,7 @@ def run_ai_with_progress(file_bytes, target_pages, sys_prompt, usr_prompt, succe
 
         try:
             response = ai_client.models.generate_content(
-                model='gemini-2.5-pro',
+                model=MODEL_NAME,
                 contents=d_imgs,
                 config=types.GenerateContentConfig(
                     system_instruction=sys_prompt,
@@ -166,7 +172,7 @@ def run_ai_with_progress(file_bytes, target_pages, sys_prompt, usr_prompt, succe
 
     try:
         final_response = ai_client.models.generate_content(
-            model='gemini-2.5-pro',
+            model=MODEL_NAME,
             contents=[reduce_usr_prompt],
             config=types.GenerateContentConfig(system_instruction=reduce_sys_prompt, temperature=0.1)
         )
@@ -274,7 +280,7 @@ if uploaded_file:
                         usr_prompt = "Extract the Sheet Number and Sheet Title from this title block. Output ONLY in this exact format: 'SheetNumber - SheetTitle'."
                         sys_prompt = "You are a meticulous document archivist. Output strictly the requested format with no other text."
                         res = ai_client.models.generate_content(
-                            model='gemini-2.5-pro', 
+                            model=MODEL_NAME, 
                             contents=[usr_prompt, img],
                             config=types.GenerateContentConfig(system_instruction=sys_prompt, temperature=0.1)
                         )
@@ -397,7 +403,7 @@ if uploaded_file:
                         {st.session_state.schedule_results}"""
                         
                         res = ai_client.models.generate_content(
-                            model='gemini-2.5-pro', 
+                            model=MODEL_NAME, 
                             contents=[usr_prompt],
                             config=types.GenerateContentConfig(system_instruction=sys_prompt, temperature=0.1)
                         )
