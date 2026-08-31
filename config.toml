@@ -1,0 +1,23 @@
+# Pinning the theme is what fixes the contrast bug at the root.
+#
+# The custom CSS styles a navy sidebar and assumes a light document surface.
+# Without this file, Streamlit follows the viewer's OS dark/light preference,
+# so the same CSS lands on a dark canvas and native widgets (file uploader,
+# selects) end up dark-text-on-dark. Pinning removes the guesswork.
+#
+# Drawings also read truer against a light surface, which is what the main
+# canvas is for.
+
+[theme]
+base = "light"
+primaryColor = "#E8590C"
+backgroundColor = "#F3F5F7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#10151C"
+font = "sans serif"
+
+[server]
+maxUploadSize = 300
+
+[browser]
+gatherUsageStats = false
